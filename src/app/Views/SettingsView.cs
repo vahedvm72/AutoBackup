@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -20,6 +21,11 @@ public sealed class SettingsView : UserControl
     private readonly TextBlock _winrarStatus;
     private readonly TextBlock _error;
     private readonly TextBlock _notice;
+    private readonly TextBlock _updateStatus;
+    private readonly Button _checkUpdatesButton;
+    private readonly Button _installUpdateButton;
+    private UpdateInfo _availableUpdate;
+    private bool _checkingUpdates;
 
     public event Action<AppConfig, string> Saved;
     public event Action<string> SettingsMoved;
@@ -103,6 +109,27 @@ public sealed class SettingsView : UserControl
         rarCard.Children.Add(rarField);
         rarCard.Children.Add(_winrarStatus);
         leftColumn.Children.Add(SectionCard(rarCard));
+
+        _updateStatus = Ui.T(string.Empty, 11.5, Ui.Dim);
+        _updateStatus.TextWrapping = TextWrapping.Wrap;
+        _updateStatus.Margin = new Thickness(0, 10, 0, 0);
+        _checkUpdatesButton = Ui.Button("Check for updates", "\uE72C", ButtonKind.Secondary, CheckForUpdates);
+        _checkUpdatesButton.MinWidth = 176;
+        AutomationProperties.SetName(_checkUpdatesButton, "Check for updates");
+        _installUpdateButton = Ui.Button("Install update", "\uE896", ButtonKind.Primary, InstallUpdate);
+        _installUpdateButton.MinWidth = 150;
+        _installUpdateButton.Margin = new Thickness(8, 0, 0, 0);
+        _installUpdateButton.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetName(_installUpdateButton, "Install update");
+        var updateButtons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+        updateButtons.Children.Add(_checkUpdatesButton);
+        updateButtons.Children.Add(_installUpdateButton);
+        var updatesCard = new StackPanel();
+        updatesCard.Children.Add(SectionHeader("\uE895", Ui.Text, Ui.Hex("#1A1A1A"), "Updates",
+            "Installed version " + AppInfo.Version + ". New versions are downloaded from GitHub."));
+        updatesCard.Children.Add(_updateStatus);
+        updatesCard.Children.Add(updateButtons);
+        rightColumn.Children.Add(SectionCard(updatesCard));
 
         var maintenance = new StackPanel();
         maintenance.Children.Add(SectionHeader("\uE713", Ui.Muted, Ui.Hex("#1A1A1A"), "Maintenance",
@@ -262,6 +289,83 @@ public sealed class SettingsView : UserControl
         {
             handler(_config.Clone(), _settingsPath);
         }
+    }
+
+    private async void CheckForUpdates()
+    {
+        if (_checkingUpdates)
+        {
+            return;
+        }
+        _checkingUpdates = true;
+        _checkUpdatesButton.IsEnabled = false;
+        _installUpdateButton.Visibility = Visibility.Collapsed;
+        SetUpdateStatus("Checking GitHub for updates...", Ui.Dim);
+        try
+        {
+            var update = await UpdateService.CheckAsync(CancellationToken.None);
+            if (update == null)
+            {
+                _availableUpdate = null;
+                SetUpdateStatus("You are using the latest version (v" + AppInfo.Version + ").", Ui.Success);
+            }
+            else
+            {
+                _availableUpdate = update;
+                SetUpdateStatus("Version " + update.Version + " is available on GitHub.", Ui.Text);
+                _installUpdateButton.Visibility = Visibility.Visible;
+            }
+        }
+        catch (Exception ex)
+        {
+            SetUpdateStatus("Could not check for updates. " + ex.Message, Ui.Warning);
+        }
+        finally
+        {
+            _checkingUpdates = false;
+            _checkUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    private async void InstallUpdate()
+    {
+        if (_availableUpdate == null)
+        {
+            return;
+        }
+        _checkUpdatesButton.IsEnabled = false;
+        _installUpdateButton.IsEnabled = false;
+        SetUpdateStatus("Downloading version " + _availableUpdate.Version + "...", Ui.Dim);
+        try
+        {
+            var destination = UpdateService.PrepareInstallerPath(_availableUpdate);
+            await UpdateService.DownloadAsync(_availableUpdate, destination, delegate(double percent)
+            {
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    SetUpdateStatus("Downloading version " + _availableUpdate.Version + "... " + ((int)percent) + "%", Ui.Dim);
+                }));
+            }, CancellationToken.None);
+            SetUpdateStatus("Starting the installer...", Ui.Text);
+            UpdateService.RunInstaller(destination);
+            var window = Window.GetWindow(this);
+            if (window != null)
+            {
+                window.Close();
+            }
+        }
+        catch (Exception ex)
+        {
+            SetUpdateStatus("The update could not be installed. " + ex.Message, Ui.Danger);
+            _checkUpdatesButton.IsEnabled = true;
+            _installUpdateButton.IsEnabled = true;
+        }
+    }
+
+    private void SetUpdateStatus(string text, Brush color)
+    {
+        _updateStatus.Text = text;
+        _updateStatus.Foreground = color ?? Ui.Dim;
     }
 
     private void MoveSettingsFile()

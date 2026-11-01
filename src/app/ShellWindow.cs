@@ -24,6 +24,7 @@ public sealed class ShellWindow : ChromeWindow
     private bool _busy;
     private string _homeNotice;
     private string _discoveredBackupFolder;
+    private bool _autoUpdateChecked;
 
     private enum OperationKind
     {
@@ -71,6 +72,74 @@ public sealed class ShellWindow : ChromeWindow
             {
                 ShowRecovery(load);
             }
+        }
+
+        Loaded += async delegate { await CheckForUpdatesOnStartupAsync(); };
+    }
+
+    private async Task CheckForUpdatesOnStartupAsync()
+    {
+        if (_autoUpdateChecked || _config == null || _busy || !UpdateService.IsInstalled)
+        {
+            return;
+        }
+        _autoUpdateChecked = true;
+        try
+        {
+            var update = await UpdateService.CheckAsync(CancellationToken.None);
+            if (update == null || _busy)
+            {
+                return;
+            }
+            await InstallUpdateAutomaticallyAsync(update);
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task InstallUpdateAutomaticallyAsync(UpdateInfo update)
+    {
+        if (update == null || _busy)
+        {
+            return;
+        }
+        var cts = new CancellationTokenSource();
+        SetTitle("Updating Auto Backup", "Version " + update.Version + " is available");
+        ShowBack(false);
+        ShowSettings(false);
+        var progress = new ProgressView("Updating Auto Backup",
+            "A new version (" + update.Version + ") was found on GitHub. Downloading and installing it automatically.", "\uE895");
+        progress.CancelRequested += delegate
+        {
+            try { cts.Cancel(); } catch { }
+        };
+        ShowView(progress);
+        try
+        {
+            var destination = UpdateService.PrepareInstallerPath(update);
+            await UpdateService.DownloadAsync(update, destination, delegate(double percent)
+            {
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    progress.SetProgress(percent, "Downloading version " + update.Version + "...");
+                }));
+            }, cts.Token);
+            progress.SetProgress(100, "Starting the installer...");
+            UpdateService.RunInstaller(destination);
+            Close();
+        }
+        catch (OperationCanceledException)
+        {
+            ShowHome();
+        }
+        catch
+        {
+            ShowHome();
+        }
+        finally
+        {
+            try { cts.Dispose(); } catch { }
         }
     }
 

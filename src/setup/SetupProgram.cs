@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
@@ -14,11 +15,111 @@ namespace AutoBackup.Setup;
 public static class SetupProgram
 {
     [STAThread]
-    public static void Main()
+    public static void Main(string[] args)
     {
+        if (HasArgument(args, "--silent"))
+        {
+            RunSilent(args);
+            return;
+        }
+
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         Ui.InstallGlobalResources(app);
         app.Run(new SetupWindow());
+    }
+
+    private static void RunSilent(string[] args)
+    {
+        string installFolder;
+        try
+        {
+            string installed;
+            var isInstalled = InstallCommon.IsInstalled(out installed);
+            installFolder = isInstalled && !string.IsNullOrWhiteSpace(installed)
+                ? installed
+                : InstallInfo.DefaultInstallFolder;
+
+            for (var attempt = 0; attempt < 40; attempt++)
+            {
+                var running = InstallCommon.GetRunningApps();
+                var alive = running.Length > 0;
+                foreach (var process in running)
+                {
+                    try { process.Dispose(); } catch { }
+                }
+                if (!alive)
+                {
+                    break;
+                }
+                Thread.Sleep(250);
+            }
+            if (InstallCommon.GetRunningApps().Length > 0)
+            {
+                InstallCommon.CloseRunningApps();
+            }
+
+            var desktopShortcut = isInstalled ? File.Exists(InstallInfo.DesktopShortcut) : true;
+            var startMenuShortcut = isInstalled ? File.Exists(InstallInfo.StartMenuShortcut) : true;
+            InstallCommon.Install(installFolder, desktopShortcut, startMenuShortcut, null);
+
+            if (HasArgument(args, "--relaunch"))
+            {
+                StartApp(installFolder);
+            }
+            Environment.ExitCode = 0;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                File.WriteAllText(Path.Combine(Path.GetTempPath(), "AutoBackupUpdate.log"),
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n" + ex);
+            }
+            catch
+            {
+            }
+            try
+            {
+                string installed;
+                var folder = InstallCommon.IsInstalled(out installed) && !string.IsNullOrWhiteSpace(installed)
+                    ? installed
+                    : InstallInfo.DefaultInstallFolder;
+                if (HasArgument(args, "--relaunch") && File.Exists(InstallInfo.AppPath(folder)))
+                {
+                    StartApp(folder);
+                }
+            }
+            catch
+            {
+            }
+            Environment.ExitCode = 1;
+        }
+    }
+
+    private static void StartApp(string installFolder)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = InstallInfo.AppPath(installFolder),
+            WorkingDirectory = installFolder,
+            UseShellExecute = true
+        });
+    }
+
+    private static bool HasArgument(string[] args, string value)
+    {
+        if (args == null)
+        {
+            return false;
+        }
+        foreach (var arg in args)
+        {
+            if (string.Equals(arg, value, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }
 

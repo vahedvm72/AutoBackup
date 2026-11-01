@@ -8,7 +8,7 @@
 
 - هر بکاپ یک نام دلخواه، پوشه اصلی و پوشه بکاپ مستقل دارد
 - بکاپ‌ها و ری‌استورها را تیک بزنید و **Start** را بزنید
-- هر آرشیو به پوشه اصلی همان بکاپ برگردانده می‌شود
+- ری‌استور مثل سینک است: محتوای فعلی پوشه پاک و با محتوای آرشیو جایگزین می‌شود
 - یک فایل تنظیمات مشترک برای همه دستگاه‌ها
 - بررسی و نصب خودکار آپدیت از گیت‌هاب، به‌همراه دکمه بررسی دستی در Settings
 
@@ -22,7 +22,7 @@ A lightweight Windows app that backs up folders with WinRAR and restores any arc
 
 - Each backup job has a custom name, a main folder, and its own backup folder
 - Tick the backups and restores you want, then press **Start**
-- Restores go back to the main folder of the same job
+- Restore mirrors the archive: the destination folder is cleared and replaced with the archive contents
 - One shared settings file works across all your devices
 - Automatic update check/install from GitHub, plus a manual check in Settings
 

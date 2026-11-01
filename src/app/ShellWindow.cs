@@ -534,6 +534,13 @@ public sealed class ShellWindow : ChromeWindow
                     "One of the selected archives or its destination is no longer available. Refresh the list and try again.", true);
                 return;
             }
+            var targetError = ArchiveService.ValidateRestoreTarget(_config, item.TargetFolder, _settingsPath);
+            if (!string.IsNullOrEmpty(targetError))
+            {
+                DialogService.Alert(this, "Restore cannot start",
+                    "\"" + item.Archive.Name + "\"\n\n" + targetError, true);
+                return;
+            }
         }
 
         if (restores.Count > 0)
@@ -549,8 +556,8 @@ public sealed class ShellWindow : ChromeWindow
                 lines.AppendLine("\u2022 and " + (restores.Count - 6) + " more...");
             }
             var message = restores.Count + (restores.Count == 1 ? " archive will" : " archives will")
-                + " be extracted to its main folder:\n\n" + lines
-                + "\nFiles with the same names will be overwritten.";
+                + " replace the contents of its main folder:\n\n" + lines
+                + "\nEverything currently inside those folders will be deleted first, then the archive contents will be copied.";
             if (jobs.Count > 0)
             {
                 message += "\n\n" + jobs.Count
@@ -686,6 +693,10 @@ public sealed class ShellWindow : ChromeWindow
             parts.Add(restored + (restored == 1 ? " archive was restored" : " archives were restored"));
         }
         var subtitle = string.Join(" and ", parts) + ".";
+        if (restored > 0)
+        {
+            subtitle += " The destination folders were cleared before restoring.";
+        }
 
         string folder;
         string locationLabel;
@@ -743,7 +754,7 @@ public sealed class ShellWindow : ChromeWindow
         {
             return;
         }
-        var dialog = DialogService.ShowRestore(this, archive, _config);
+        var dialog = DialogService.ShowRestore(this, archive, _config, _settingsPath);
         if (dialog == null || string.IsNullOrEmpty(dialog.Destination))
         {
             return;
@@ -808,7 +819,7 @@ public sealed class ShellWindow : ChromeWindow
         {
             Success = true,
             Title = "Restore complete",
-            Subtitle = "The archive was extracted successfully. Your files are ready in the destination folder.",
+            Subtitle = "The destination folder was cleared and replaced with the archive contents.",
             LocationLabel = "Restored to",
             Location = result.TargetFolder,
             Duration = Formats.Duration(result.Duration),

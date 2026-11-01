@@ -499,6 +499,122 @@ public static class ArchiveService
         }
     }
 
+    public static string ValidateRestoreTarget(AppConfig config, string targetFolder, string protectedSettingsPath = null)
+    {
+        var cleaned = AppConfig.CleanPath(targetFolder);
+        if (string.IsNullOrEmpty(cleaned))
+        {
+            return "Choose a destination folder for the restore.";
+        }
+        string target;
+        try
+        {
+            target = NormalizedFullPath(cleaned);
+        }
+        catch (Exception ex)
+        {
+            return "The destination folder path is not valid. " + ex.Message;
+        }
+        if (File.Exists(target))
+        {
+            return "The destination is a file. Choose a folder instead.";
+        }
+
+        var root = GetRoot(target);
+        if (!string.IsNullOrEmpty(root) && PathsEqual(target, root))
+        {
+            return "A drive root cannot be used as a restore destination.";
+        }
+
+        var protectedFolders = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+        };
+        foreach (var folder in protectedFolders)
+        {
+            if (!string.IsNullOrEmpty(folder) && PathsEqual(target, folder))
+            {
+                return "This protected folder cannot be used as a restore destination:\n" + folder;
+            }
+        }
+
+        var appFolder = AppDomain.CurrentDomain.BaseDirectory;
+        if (!string.IsNullOrEmpty(appFolder))
+        {
+            try
+            {
+                var app = NormalizedFullPath(appFolder);
+                if (IsInside(app, target) || IsInside(target, app))
+                {
+                    return "The restore destination overlaps the Auto Backup installation folder:\n" + app;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        try
+        {
+            var temp = NormalizedFullPath(Path.GetTempPath());
+            if (IsInside(temp, target))
+            {
+                return "The restore destination cannot contain the Windows temporary folder.";
+            }
+        }
+        catch
+        {
+        }
+
+        if (config != null)
+        {
+            foreach (var backupFolder in GetBackupFolders(config))
+            {
+                if (PathsEqual(target, backupFolder) || IsInside(backupFolder, target) || IsInside(target, backupFolder))
+                {
+                    return "The restore destination overlaps a backup folder:\n" + backupFolder
+                        + "\n\nChoose a different destination, or move the backup folder outside this folder.";
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(protectedSettingsPath))
+        {
+            try
+            {
+                var settings = NormalizedFullPath(protectedSettingsPath);
+                if (IsInside(settings, target))
+                {
+                    return "The shared settings file would be deleted by this restore:\n" + settings
+                        + "\n\nChoose a different destination.";
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        try
+        {
+            if (Directory.Exists(target))
+            {
+                var attributes = File.GetAttributes(target);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    return "The destination is a link or junction. Choose a normal folder instead.";
+                }
+            }
+        }
+        catch
+        {
+        }
+        return null;
+    }
+
     public static async Task<RestoreResult> RestoreAsync(
         AppConfig config,
         string archivePath,
@@ -519,47 +635,235 @@ public static class ArchiveService
             throw new AutoBackupException("Choose a destination folder for the restore.");
         }
 
-        var target = Path.GetFullPath(AppConfig.CleanPath(targetFolder));
-        try
+        var target = NormalizedFullPath(AppConfig.CleanPath(targetFolder));
+        var validation = ValidateRestoreTarget(config, target);
+        if (validation != null)
         {
-            Directory.CreateDirectory(target);
-        }
-        catch (Exception ex)
-        {
-            throw new AutoBackupException("The restore folder could not be created:\n" + target + "\n\n" + ex.Message, ex);
+            throw new AutoBackupException(validation);
         }
 
         var started = DateTime.UtcNow;
-        if (progress != null)
+        var tempRoot = Path.Combine(Path.GetTempPath(), "AutoBackup", "restore-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        try
         {
-            progress(0, "Preparing to restore...");
-        }
+            if (IsInside(tempRoot, target) || PathsEqual(tempRoot, target))
+            {
+                throw new AutoBackupException("The restore destination overlaps the update temporary folder. Choose another destination.");
+            }
 
-        var rar = await RarRunner.RunAsync(
-            config.WinRarPath,
-            "x -o+ -y -p- " + Quote(Path.GetFullPath(archivePath)),
-            target,
-            delegate(double percent, string status)
+            if (progress != null)
+            {
+                progress(0, "Opening the archive in a temporary folder...");
+            }
+
+            var rar = await RarRunner.RunAsync(
+                config.WinRarPath,
+                "x -o+ -y -p- " + Quote(Path.GetFullPath(archivePath)),
+                tempRoot,
+                delegate(double percent, string status)
+                {
+                    if (progress != null)
+                    {
+                        progress(percent * 0.85, status);
+                    }
+                },
+                token).ConfigureAwait(true);
+
+            token.ThrowIfCancellationRequested();
+            if (!Directory.EnumerateFileSystemEntries(tempRoot).Any())
+            {
+                throw new AutoBackupException("The archive contains no files. The destination folder was not changed.");
+            }
+
+            if (progress != null)
+            {
+                progress(85, "Replacing the destination folder contents...");
+            }
+            ReplaceFolderContents(target, tempRoot, delegate(double percent, string status)
             {
                 if (progress != null)
                 {
-                    progress(percent, status);
+                    progress(85 + (percent * 0.15), status);
                 }
-            },
-            token).ConfigureAwait(true);
+            });
 
-        if (progress != null)
+            if (progress != null)
+            {
+                progress(100, null);
+            }
+
+            return new RestoreResult
+            {
+                TargetFolder = target,
+                Duration = DateTime.UtcNow - started,
+                Warning = rar.Warning,
+                Output = rar.Output
+            };
+        }
+        finally
         {
-            progress(100, null);
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    private static void ReplaceFolderContents(string target, string extracted, Action<double, string> progress)
+    {
+        var trimmed = target.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var parent = Path.GetDirectoryName(trimmed);
+        var name = Path.GetFileName(trimmed);
+        if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name))
+        {
+            throw new AutoBackupException("The restore destination is not valid:\n" + target);
+        }
+        var oldPath = Path.Combine(parent, name + ".autobackup-old-"
+            + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", En) + "-"
+            + Guid.NewGuid().ToString("N").Substring(0, 4));
+        var hasExisting = Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any();
+        var renamed = false;
+
+        try
+        {
+            if (hasExisting)
+            {
+                Directory.Move(target, oldPath);
+                renamed = true;
+            }
+            Directory.CreateDirectory(target);
+            CopyDirectoryContents(extracted, target, progress);
+        }
+        catch (Exception ex)
+        {
+            var rollback = TryRollback(target, renamed ? oldPath : null);
+            throw new AutoBackupException("The restore could not replace the destination folder. " + rollback
+                + "\n\n" + ex.Message, ex);
         }
 
-        return new RestoreResult
+        if (renamed)
         {
-            TargetFolder = target,
-            Duration = DateTime.UtcNow - started,
-            Warning = rar.Warning,
-            Output = rar.Output
-        };
+            DeleteDirectoryBestEffort(oldPath);
+        }
+    }
+
+    private static string TryRollback(string target, string oldPath)
+    {
+        if (string.IsNullOrEmpty(oldPath))
+        {
+            return "The previous contents were kept.";
+        }
+        string error = null;
+        try
+        {
+            if (Directory.Exists(target))
+            {
+                DeleteDirectoryBestEffort(target);
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        if (Directory.Exists(target))
+        {
+            return "The previous contents are saved at:\n" + oldPath;
+        }
+        try
+        {
+            Directory.Move(oldPath, target);
+            return "The previous contents were restored.";
+        }
+        catch (Exception ex)
+        {
+            return "The previous contents are saved at:\n" + oldPath + "\n\n" + ex.Message;
+        }
+    }
+
+    private static void CopyDirectoryContents(string source, string destination, Action<double, string> progress)
+    {
+        var directories = Directory.GetDirectories(source, "*", SearchOption.AllDirectories);
+        foreach (var directory in directories)
+        {
+            var relative = directory.Substring(source.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            Directory.CreateDirectory(Path.Combine(destination, relative));
+        }
+
+        var files = Directory.GetFiles(source, "*", SearchOption.AllDirectories);
+        long total = 0;
+        foreach (var file in files)
+        {
+            try { total += new FileInfo(file).Length; } catch { }
+        }
+        long done = 0;
+        foreach (var file in files)
+        {
+            var relative = file.Substring(source.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var output = Path.Combine(destination, relative);
+            var outputFolder = Path.GetDirectoryName(output);
+            if (!string.IsNullOrEmpty(outputFolder))
+            {
+                Directory.CreateDirectory(outputFolder);
+            }
+            File.Copy(file, output, true);
+            try
+            {
+                File.SetAttributes(output, File.GetAttributes(file));
+                File.SetLastWriteTimeUtc(output, File.GetLastWriteTimeUtc(file));
+            }
+            catch
+            {
+            }
+            long size = 0;
+            try { size = new FileInfo(file).Length; } catch { }
+            done += size;
+            if (progress != null && total > 0)
+            {
+                progress(done * 100.0 / total, "Copying " + Path.GetFileName(file));
+            }
+        }
+        if (progress != null)
+        {
+            progress(100, "Restore complete.");
+        }
+    }
+
+    private static void DeleteDirectoryBestEffort(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path))
+            {
+                return;
+            }
+            foreach (var file in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
+            {
+                try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+            }
+            Directory.Delete(path, true);
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool IsInside(string candidate, string parent)
+    {
+        try
+        {
+            var item = NormalizedFullPath(candidate);
+            var folder = NormalizedFullPath(parent);
+            if (PathsEqual(item, folder))
+            {
+                return true;
+            }
+            var prefix = folder.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                ? folder
+                : folder + Path.DirectorySeparatorChar;
+            return item.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static ArchiveScanResult ScanArchives(AppConfig config)

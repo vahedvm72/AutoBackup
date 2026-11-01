@@ -25,9 +25,9 @@ public static class DialogService
         return window.ShowDialog() == true;
     }
 
-    public static RestoreWindow ShowRestore(Window owner, ArchiveInfo archive, AppConfig config)
+    public static RestoreWindow ShowRestore(Window owner, ArchiveInfo archive, AppConfig config, string settingsPath = null)
     {
-        var window = new RestoreWindow(archive, config) { Owner = owner, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        var window = new RestoreWindow(archive, config, settingsPath) { Owner = owner, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         return window.ShowDialog() == true ? window : null;
     }
 
@@ -529,12 +529,16 @@ public sealed class RestoreWindow : AutoBackup.UI.ChromeWindow
     private readonly TextBlock _validation;
     private readonly TextBlock _notice;
     private readonly string _originalSource;
+    private readonly AppConfig _config;
+    private readonly string _settingsPath;
 
     public string Destination { get; private set; }
 
-    public RestoreWindow(ArchiveInfo archive, AppConfig config)
-        : base(AppInfo.Name, 600, 470, false, false, false)
+    public RestoreWindow(ArchiveInfo archive, AppConfig config, string settingsPath = null)
+        : base(AppInfo.Name, 600, 500, false, false, false)
     {
+        _config = config;
+        _settingsPath = settingsPath;
         _originalSource = ArchiveService.FindSourceForArchive(config, archive.Name);
         ShowInTaskbar = false;
 
@@ -562,7 +566,7 @@ public sealed class RestoreWindow : AutoBackup.UI.ChromeWindow
         browse.MinWidth = 104;
         AutomationProperties.SetName(browse, "Browse restore destination");
         var inputRow = Ui.PathInput(_destination, browse);
-        form.Children.Add(Ui.Field("Destination folder", inputRow, "The archive will be extracted into this folder. Existing files with the same names will be overwritten."));
+        form.Children.Add(Ui.Field("Destination folder", inputRow, "The folder will be cleared first: its current files are deleted, then the archive contents are copied in."));
 
         _notice = Ui.T(string.Empty, 11.5, Ui.Warning);
         _notice.TextWrapping = TextWrapping.Wrap;
@@ -644,7 +648,7 @@ public sealed class RestoreWindow : AutoBackup.UI.ChromeWindow
             }
             if (hasItems)
             {
-                _notice.Text = "This folder is not empty. Files with the same names will be overwritten.";
+                _notice.Text = "This folder is not empty. Its current contents will be deleted before the restore.";
                 _notice.Visibility = Visibility.Visible;
             }
             else
@@ -675,6 +679,13 @@ public sealed class RestoreWindow : AutoBackup.UI.ChromeWindow
                 _validation.Visibility = Visibility.Visible;
                 return;
             }
+            var targetError = ArchiveService.ValidateRestoreTarget(_config, path, _settingsPath);
+            if (!string.IsNullOrEmpty(targetError))
+            {
+                _validation.Text = targetError;
+                _validation.Visibility = Visibility.Visible;
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -682,7 +693,37 @@ public sealed class RestoreWindow : AutoBackup.UI.ChromeWindow
             _validation.Visibility = Visibility.Visible;
             return;
         }
+        if (HasEntries(path))
+        {
+            var confirmed = DialogService.Confirm(this, "Replace the folder contents?",
+                "Everything currently inside:\n" + path
+                + "\n\nwill be deleted, then the backup contents will be copied there. This cannot be undone.",
+                "Replace and restore", true);
+            if (!confirmed)
+            {
+                return;
+            }
+        }
         Destination = path;
         DialogResult = true;
+    }
+
+    private static bool HasEntries(string path)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+            {
+                return false;
+            }
+            using (var entries = Directory.EnumerateFileSystemEntries(path).GetEnumerator())
+            {
+                return entries.MoveNext();
+            }
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

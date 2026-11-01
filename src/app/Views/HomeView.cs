@@ -155,7 +155,7 @@ public sealed class HomeView : UserControl
         Grid.SetColumn(actions, 1);
         rightTitle.Children.Add(actions);
         right.Children.Add(rightTitle);
-        var rightSub = Ui.T("Pick one archive per backup to restore to its main folder.", 10.5, Ui.Dim);
+        var rightSub = Ui.T("Restoring replaces that folder's current contents.", 10.5, Ui.Dim);
         rightSub.Margin = new Thickness(0, 3, 0, 0);
         right.Children.Add(rightSub);
         Grid.SetColumn(right, 2);

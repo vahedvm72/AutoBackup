@@ -206,7 +206,7 @@ public static class UpdateService
         object assetsValue;
         if (root.TryGetValue("assets", out assetsValue))
         {
-            var assets = assetsValue as object[];
+            var assets = assetsValue as System.Collections.IEnumerable;
             if (assets != null)
             {
                 foreach (var asset in assets)

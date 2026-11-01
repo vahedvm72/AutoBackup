@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Windows;
@@ -135,18 +134,6 @@ public sealed class SettingsView : UserControl
         maintenance.Children.Add(SectionHeader("\uE713", Ui.Muted, Ui.Hex("#1A1A1A"), "Maintenance",
             "Version " + AppInfo.Version + "  \u2022  " + Environment.MachineName));
         var actions = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
-        var openRow = new StackPanel { Orientation = Orientation.Horizontal };
-        var openSettings = Ui.Button("Open settings folder", "\uE838", ButtonKind.Ghost, OpenSettingsFolder);
-        openSettings.HorizontalAlignment = HorizontalAlignment.Left;
-        openSettings.MinWidth = 186;
-        openSettings.Margin = new Thickness(0, 0, 6, 0);
-        openRow.Children.Add(openSettings);
-        var openBackups = Ui.Button("Open backup folder", "\uE838", ButtonKind.Ghost, OpenBackupFolder);
-        openBackups.HorizontalAlignment = HorizontalAlignment.Left;
-        openBackups.MinWidth = 186;
-        openRow.Children.Add(openBackups);
-        actions.Children.Add(openRow);
-
         var uninstaller = GetUninstallerPath();
         if (!string.IsNullOrEmpty(uninstaller))
         {
@@ -166,16 +153,6 @@ public sealed class SettingsView : UserControl
         }
         maintenance.Children.Add(actions);
         rightColumn.Children.Add(SectionCard(maintenance));
-
-        var foldersNote = new StackPanel();
-        foldersNote.Children.Add(SectionHeader("\uE8B7", Ui.Text, Ui.Hex("#1A1A1A"), "Backup folders",
-            "Folders and their restore history are managed on the home screen."));
-        var note = Ui.T("Use New Backup to add a folder. Every row has Edit and Delete actions, and each row shows its own archives for restoring.", 11.5, Ui.Muted);
-        note.TextWrapping = TextWrapping.Wrap;
-        note.LineHeight = 18;
-        note.Margin = new Thickness(0, 12, 0, 0);
-        foldersNote.Children.Add(note);
-        rightColumn.Children.Add(SectionCard(foldersNote));
 
         _error = Ui.T(string.Empty, 11.5, Ui.Danger);
         _error.TextWrapping = TextWrapping.Wrap;
@@ -486,44 +463,6 @@ public sealed class SettingsView : UserControl
         {
             _winrarStatus.Text = "Rar.exe was not found at this path. Use Auto-detect or choose another file.";
             _winrarStatus.Foreground = Ui.Warning;
-        }
-    }
-
-    private void OpenSettingsFolder()
-    {
-        try
-        {
-            var folder = Path.GetDirectoryName(_settingsPath);
-            if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
-            {
-                DialogService.Alert(Window.GetWindow(this), "Settings folder unavailable", "The shared settings folder is not available:\n" + folder, true);
-                return;
-            }
-            Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = "\"" + folder + "\"", UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            SetError("The settings folder could not be opened. " + ex.Message);
-        }
-    }
-
-    private void OpenBackupFolder()
-    {
-        try
-        {
-            var folder = AppConfig.CleanPath(_config.BackupFolder);
-            if (string.IsNullOrEmpty(folder))
-            {
-                SetError("The backup folder is not configured. Set it on the home screen.");
-                return;
-            }
-            folder = Path.GetFullPath(folder);
-            Directory.CreateDirectory(folder);
-            Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = "\"" + folder + "\"", UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            SetError("The backup folder could not be opened. " + ex.Message);
         }
     }
 

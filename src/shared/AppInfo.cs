@@ -3,7 +3,7 @@
 public static class AppInfo
 {
     public const string Name = "Auto Backup";
-    public const string Version = "1.4.0";
+    public const string Version = "1.4.1";
     public const string SettingsFileName = "AutoBackup.settings.json";
     public const string ArchivePrefix = "Backup_";
     public const string ExeName = "AutoBackup.exe";

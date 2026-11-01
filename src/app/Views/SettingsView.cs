@@ -1,0 +1,451 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Media;
+using AutoBackup.Services;
+using AutoBackup.UI;
+
+namespace AutoBackup.Views;
+
+public sealed class SettingsView : UserControl
+{
+    private readonly AppConfig _config;
+    private readonly Action _uninstall;
+    private string _settingsPath;
+    private readonly TextBlock _settingsPathText;
+    private readonly TextBox _winrarBox;
+    private readonly TextBlock _winrarStatus;
+    private readonly TextBlock _error;
+    private readonly TextBlock _notice;
+
+    public event Action<AppConfig, string> Saved;
+    public event Action<string> SettingsMoved;
+
+    public SettingsView(AppConfig config, string settingsPath, Action uninstall)
+    {
+        _config = config;
+        _settingsPath = settingsPath;
+        _uninstall = uninstall;
+
+        var leftColumn = new StackPanel();
+        var rightColumn = new StackPanel();
+
+        var header = new StackPanel { Margin = new Thickness(0, 0, 0, 14) };
+        header.Children.Add(Ui.Display("Settings", 22, FontWeights.SemiBold));
+        var subtitle = Ui.T("WinRAR and the shared settings file used by every device.", 12.5, Ui.Muted);
+        subtitle.TextWrapping = TextWrapping.Wrap;
+        subtitle.LineHeight = 19;
+        subtitle.Margin = new Thickness(0, 5, 0, 0);
+        header.Children.Add(subtitle);
+
+        _settingsPathText = Ui.PathText(settingsPath, 12, Ui.Text);
+        var settingsCard = new StackPanel();
+        settingsCard.Children.Add(SectionHeader("\uE8A5", Ui.Accent, Ui.AccentSoft, "Shared settings file",
+            "Keep this file on a synced drive so every device shares it."));
+        var pathBox = new Border
+        {
+            Background = Ui.Bg2,
+            BorderBrush = Ui.Line,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(9),
+            Padding = new Thickness(12, 10, 12, 10),
+            Margin = new Thickness(0, 12, 0, 0),
+            Child = _settingsPathText
+        };
+        settingsCard.Children.Add(pathBox);
+        var moveRow = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        moveRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        moveRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var moveNote = Ui.T("Moving the file copies your current settings and updates this device.", 11.5, Ui.Dim);
+        moveNote.TextWrapping = TextWrapping.Wrap;
+        moveNote.VerticalAlignment = VerticalAlignment.Center;
+        moveRow.Children.Add(moveNote);
+        var move = Ui.Button("Change location...", "\uE8B7", ButtonKind.Ghost, MoveSettingsFile);
+        move.MinWidth = 152;
+        Grid.SetColumn(move, 1);
+        moveRow.Children.Add(move);
+        settingsCard.Children.Add(moveRow);
+        leftColumn.Children.Add(SectionCard(settingsCard));
+
+        _winrarBox = Ui.Input(config.WinRarPath ?? string.Empty, "WinRAR path");
+        _winrarBox.TextChanged += delegate { RefreshWinRarStatus(); };
+        var winrarBrowse = Ui.Button("Browse", "\uE8B7", ButtonKind.Secondary, BrowseWinRar);
+        winrarBrowse.MinWidth = 92;
+        AutomationProperties.SetName(winrarBrowse, "Browse WinRAR");
+        var detect = Ui.Button("Auto-detect", "\uE72C", ButtonKind.Ghost, DetectWinRar);
+        detect.MinWidth = 116;
+        AutomationProperties.SetName(detect, "Auto-detect WinRAR");
+        var winrarStack = new StackPanel();
+        winrarStack.Children.Add(_winrarBox);
+        var winrarButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+        detect.Margin = new Thickness(0, 0, 8, 0);
+        winrarButtons.Children.Add(detect);
+        winrarButtons.Children.Add(winrarBrowse);
+        winrarStack.Children.Add(winrarButtons);
+
+        _winrarStatus = Ui.T(string.Empty, 11.5, Ui.Muted);
+        _winrarStatus.TextWrapping = TextWrapping.Wrap;
+        _winrarStatus.Margin = new Thickness(2, 9, 0, 0);
+
+        var rarCard = new StackPanel();
+        rarCard.Children.Add(SectionHeader("\uE7B8", Ui.Success, Ui.SuccessSoft, "WinRAR",
+            "Auto Backup uses the Rar.exe command-line tool that ships with WinRAR."));
+        var rarField = Ui.Field("Rar.exe path", winrarStack, null);
+        rarField.Margin = new Thickness(0, 12, 0, 0);
+        rarCard.Children.Add(rarField);
+        rarCard.Children.Add(_winrarStatus);
+        leftColumn.Children.Add(SectionCard(rarCard));
+
+        var maintenance = new StackPanel();
+        maintenance.Children.Add(SectionHeader("\uE713", Ui.Muted, Ui.Hex("#1A1A1A"), "Maintenance",
+            "Version " + AppInfo.Version + "  \u2022  " + Environment.MachineName));
+        var actions = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+        var openRow = new StackPanel { Orientation = Orientation.Horizontal };
+        var openSettings = Ui.Button("Open settings folder", "\uE838", ButtonKind.Ghost, OpenSettingsFolder);
+        openSettings.HorizontalAlignment = HorizontalAlignment.Left;
+        openSettings.MinWidth = 186;
+        openSettings.Margin = new Thickness(0, 0, 6, 0);
+        openRow.Children.Add(openSettings);
+        var openBackups = Ui.Button("Open backup folder", "\uE838", ButtonKind.Ghost, OpenBackupFolder);
+        openBackups.HorizontalAlignment = HorizontalAlignment.Left;
+        openBackups.MinWidth = 186;
+        openRow.Children.Add(openBackups);
+        actions.Children.Add(openRow);
+
+        var uninstaller = GetUninstallerPath();
+        if (!string.IsNullOrEmpty(uninstaller))
+        {
+            var uninstallButton = Ui.Button("Uninstall Auto Backup", "\uE74D", ButtonKind.DangerGhost, delegate
+            {
+                if (_uninstall != null) { _uninstall(); }
+            });
+            uninstallButton.HorizontalAlignment = HorizontalAlignment.Left;
+            uninstallButton.MinWidth = 190;
+            uninstallButton.Margin = new Thickness(0, 10, 0, 0);
+            AutomationProperties.SetName(uninstallButton, "Uninstall Auto Backup");
+            actions.Children.Add(uninstallButton);
+            var uninstallNote = Ui.T("Removing the app does not delete your shared settings file or your backups.", 11.5, Ui.Dim);
+            uninstallNote.TextWrapping = TextWrapping.Wrap;
+            uninstallNote.Margin = new Thickness(2, 7, 0, 0);
+            actions.Children.Add(uninstallNote);
+        }
+        maintenance.Children.Add(actions);
+        rightColumn.Children.Add(SectionCard(maintenance));
+
+        var foldersNote = new StackPanel();
+        foldersNote.Children.Add(SectionHeader("\uE8B7", Ui.Text, Ui.Hex("#1A1A1A"), "Backup folders",
+            "Folders and their restore history are managed on the home screen."));
+        var note = Ui.T("Use New Backup to add a folder. Every row has Edit and Delete actions, and each row shows its own archives for restoring.", 11.5, Ui.Muted);
+        note.TextWrapping = TextWrapping.Wrap;
+        note.LineHeight = 18;
+        note.Margin = new Thickness(0, 12, 0, 0);
+        foldersNote.Children.Add(note);
+        rightColumn.Children.Add(SectionCard(foldersNote));
+
+        _error = Ui.T(string.Empty, 11.5, Ui.Danger);
+        _error.TextWrapping = TextWrapping.Wrap;
+        _error.Visibility = Visibility.Collapsed;
+        _notice = Ui.T(string.Empty, 11.5, Ui.Success);
+        _notice.TextWrapping = TextWrapping.Wrap;
+        _notice.Visibility = Visibility.Collapsed;
+
+        var root = new Grid { Margin = new Thickness(30, 22, 30, 18) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        Grid.SetRow(header, 0);
+        root.Children.Add(header);
+
+        var columns = new Grid();
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(leftColumn, 0);
+        columns.Children.Add(leftColumn);
+        Grid.SetColumn(rightColumn, 2);
+        columns.Children.Add(rightColumn);
+
+        var scroll = Ui.ScrollHost(columns);
+        Grid.SetRow(scroll, 1);
+        root.Children.Add(scroll);
+
+        var footer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
+        footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var messages = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 16, 0) };
+        messages.Children.Add(_notice);
+        messages.Children.Add(_error);
+        footer.Children.Add(messages);
+        var save = Ui.Button("Save changes", "\uE73E", ButtonKind.Primary, Save);
+        save.MinWidth = 154;
+        AutomationProperties.SetName(save, "Save changes");
+        Grid.SetColumn(save, 1);
+        footer.Children.Add(save);
+        Grid.SetRow(footer, 2);
+        root.Children.Add(footer);
+
+        Content = root;
+        RefreshWinRarStatus();
+    }
+
+    private static Border SectionCard(UIElement content)
+    {
+        var card = Ui.Card(content, new Thickness(20, 16, 20, 16), 14);
+        card.Margin = new Thickness(0, 0, 0, 12);
+        return card;
+    }
+
+    private static Grid SectionHeader(string glyph, Brush color, Brush background, string title, string description)
+    {
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var tile = Ui.IconTile(glyph, color, background, 38, 16);
+        tile.Margin = new Thickness(0, 1, 13, 0);
+        tile.VerticalAlignment = VerticalAlignment.Top;
+        row.Children.Add(tile);
+        var text = new StackPanel();
+        text.Children.Add(Ui.T(title, 14, FontWeights.SemiBold, Ui.Text));
+        var desc = Ui.T(description, 11.5, Ui.Muted);
+        desc.TextWrapping = TextWrapping.Wrap;
+        desc.LineHeight = 17;
+        desc.Margin = new Thickness(0, 3, 0, 0);
+        text.Children.Add(desc);
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+        return row;
+    }
+
+    private void Save()
+    {
+        ClearMessages();
+        var winrar = WinRarLocator.Normalize(_winrarBox.Text);
+
+        if (!WinRarLocator.IsValid(winrar))
+        {
+            SetError("WinRAR was not found. Install WinRAR, click Auto-detect, or choose Rar.exe manually.");
+            return;
+        }
+        if (string.IsNullOrEmpty(_settingsPath))
+        {
+            SetError("The shared settings file location is missing.");
+            return;
+        }
+
+        _config.WinRarPath = winrar;
+        try
+        {
+            ConfigStore.SaveSettings(_config, _settingsPath);
+            ConfigStore.SaveBootstrap(_settingsPath);
+        }
+        catch (Exception ex)
+        {
+            SetError("The settings could not be saved. " + ex.Message);
+            return;
+        }
+
+        _notice.Text = "Settings saved.";
+        _notice.Visibility = Visibility.Visible;
+        var handler = Saved;
+        if (handler != null)
+        {
+            handler(_config.Clone(), _settingsPath);
+        }
+    }
+
+    private void MoveSettingsFile()
+    {
+        ClearMessages();
+        try
+        {
+            var currentFolder = Path.GetDirectoryName(_settingsPath);
+            if (string.IsNullOrEmpty(currentFolder) || !Directory.Exists(currentFolder))
+            {
+                currentFolder = ConfigStore.SuggestedSettingsFolder;
+            }
+            var folder = FolderPicker.Pick(Window.GetWindow(this), "Choose the new shared settings folder", currentFolder);
+            if (string.IsNullOrEmpty(folder))
+            {
+                return;
+            }
+            var newPath = Path.GetFullPath(ConfigStore.BuildSettingsPath(folder));
+            if (string.Equals(newPath, _settingsPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _notice.Text = "The settings file already lives in that folder.";
+                _notice.Visibility = Visibility.Visible;
+                return;
+            }
+            if (File.Exists(newPath))
+            {
+                var replace = DialogService.Confirm(Window.GetWindow(this), "Replace the existing settings file?",
+                    "A settings file already exists at:\n" + newPath + "\n\nIt will be replaced with the settings from this device.", "Replace", false);
+                if (!replace)
+                {
+                    return;
+                }
+            }
+            EnsureDirectory(Path.GetDirectoryName(newPath));
+            ConfigStore.SaveSettings(_config, newPath);
+            ConfigStore.SaveBootstrap(newPath);
+            _settingsPath = newPath;
+            _settingsPathText.Text = newPath;
+            _settingsPathText.ToolTip = newPath;
+            _notice.Text = "The settings file was moved. Other devices can point to the same file.";
+            _notice.Visibility = Visibility.Visible;
+            var handler = SettingsMoved;
+            if (handler != null)
+            {
+                handler(newPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetError("The settings file could not be moved. " + ex.Message);
+        }
+    }
+
+    private static void EnsureDirectory(string directory)
+    {
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+    }
+
+    private void BrowseWinRar()
+    {
+        ClearMessages();
+        try
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select Rar.exe",
+                Filter = "WinRAR command line (Rar.exe)|Rar.exe|Executables (*.exe)|*.exe|All files (*.*)|*.*",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+            var current = WinRarLocator.Normalize(_winrarBox.Text);
+            if (!string.IsNullOrEmpty(current) && File.Exists(current))
+            {
+                dialog.InitialDirectory = Path.GetDirectoryName(current);
+                dialog.FileName = Path.GetFileName(current);
+            }
+            var owner = Window.GetWindow(this);
+            if (owner != null && dialog.ShowDialog(owner) == true)
+            {
+                _winrarBox.Text = WinRarLocator.Normalize(dialog.FileName);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetError("WinRAR could not be selected. " + ex.Message);
+        }
+    }
+
+    private void DetectWinRar()
+    {
+        ClearMessages();
+        var detected = WinRarLocator.Detect();
+        if (string.IsNullOrEmpty(detected))
+        {
+            SetError("WinRAR was not found in the usual locations. Choose Rar.exe manually.");
+            return;
+        }
+        _winrarBox.Text = detected;
+    }
+
+    private void RefreshWinRarStatus()
+    {
+        var path = WinRarLocator.Normalize(_winrarBox.Text);
+        if (WinRarLocator.IsValid(path))
+        {
+            _winrarStatus.Text = "WinRAR is ready.";
+            _winrarStatus.Foreground = Ui.Success;
+        }
+        else if (string.IsNullOrWhiteSpace(path))
+        {
+            _winrarStatus.Text = "WinRAR was not configured. Use Auto-detect or install WinRAR first.";
+            _winrarStatus.Foreground = Ui.Warning;
+        }
+        else
+        {
+            _winrarStatus.Text = "Rar.exe was not found at this path. Use Auto-detect or choose another file.";
+            _winrarStatus.Foreground = Ui.Warning;
+        }
+    }
+
+    private void OpenSettingsFolder()
+    {
+        try
+        {
+            var folder = Path.GetDirectoryName(_settingsPath);
+            if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+            {
+                DialogService.Alert(Window.GetWindow(this), "Settings folder unavailable", "The shared settings folder is not available:\n" + folder, true);
+                return;
+            }
+            Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = "\"" + folder + "\"", UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            SetError("The settings folder could not be opened. " + ex.Message);
+        }
+    }
+
+    private void OpenBackupFolder()
+    {
+        try
+        {
+            var folder = AppConfig.CleanPath(_config.BackupFolder);
+            if (string.IsNullOrEmpty(folder))
+            {
+                SetError("The backup folder is not configured. Set it on the home screen.");
+                return;
+            }
+            folder = Path.GetFullPath(folder);
+            Directory.CreateDirectory(folder);
+            Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = "\"" + folder + "\"", UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            SetError("The backup folder could not be opened. " + ex.Message);
+        }
+    }
+
+    private static string GetUninstallerPath()
+    {
+        try
+        {
+            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, AppInfo.UninstallerName);
+            return File.Exists(path) ? path : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void ClearMessages()
+    {
+        _error.Visibility = Visibility.Collapsed;
+        _notice.Visibility = Visibility.Collapsed;
+    }
+
+    private void SetError(string message)
+    {
+        _error.Text = message;
+        _error.Visibility = Visibility.Visible;
+        _notice.Visibility = Visibility.Collapsed;
+    }
+}

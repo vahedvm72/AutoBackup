@@ -1,0 +1,18 @@
+# Build output
+/build/
+/dist/
+*.pdb
+*.ilk
+*.obj
+*.tmp
+*.log
+
+# Local test harnesses, screenshots, scratch data
+/.tmp/
+/.vs/
+*.user
+*.suo
+
+# OS files
+Thumbs.db
+desktop.ini

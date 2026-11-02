@@ -6,9 +6,11 @@
 
 **[دانلود نسخه قابل نصب](https://github.com/vahedvm72/AutoBackup/releases/latest)**
 
+- اجرای اول: انتخاب «دستگاه جدید» یا «ری‌استور از پوشه بکاپ»
 - هر بکاپ یک نام دلخواه، پوشه اصلی و پوشه بکاپ مستقل دارد
 - بکاپ‌ها و ری‌استورها را تیک بزنید و **Start** را بزنید
 - ری‌استور مثل سینک است: محتوای فعلی پوشه پاک و با محتوای آرشیو جایگزین می‌شود
+- مسیرهای ذخیره‌شده خودکار با نام کاربری ویندوز دستگاه فعلی تطبیق داده می‌شوند
 - یک فایل تنظیمات مشترک برای همه دستگاه‌ها
 - بررسی و نصب خودکار آپدیت از گیت‌هاب، به‌همراه دکمه بررسی دستی در Settings
 
@@ -20,9 +22,11 @@ A lightweight Windows app that backs up folders with WinRAR and restores any arc
 
 **[Download the installer](https://github.com/vahedvm72/AutoBackup/releases/latest)**
 
+- First launch: choose **New device** or **Restore from a backup folder**
 - Each backup job has a custom name, a main folder, and its own backup folder
 - Tick the backups and restores you want, then press **Start**
 - Restore mirrors the archive: the destination folder is cleared and replaced with the archive contents
+- Saved paths automatically adapt to the current Windows username
 - One shared settings file works across all your devices
 - Automatic update check/install from GitHub, plus a manual check in Settings
 

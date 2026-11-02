@@ -37,9 +37,10 @@ public static class DialogService
         string description,
         string initialPath,
         bool requireExisting,
-        Func<string, string> validator)
+        Func<string, string> validator,
+        string confirmLabel = "Save")
     {
-        var window = new ChangeFolderWindow(title, description, initialPath, requireExisting, validator)
+        var window = new ChangeFolderWindow(title, description, initialPath, requireExisting, validator, confirmLabel)
         {
             Owner = owner,
             WindowStartupLocation = WindowStartupLocation.CenterOwner
@@ -265,7 +266,7 @@ public sealed class ChangeFolderWindow : AutoBackup.UI.ChromeWindow
 
     public string SelectedPath { get; private set; }
 
-    public ChangeFolderWindow(string title, string description, string initialPath, bool requireExisting, Func<string, string> validator)
+    public ChangeFolderWindow(string title, string description, string initialPath, bool requireExisting, Func<string, string> validator, string confirmLabel = "Save")
         : base(AppInfo.Name, 620, 380, false, false, false)
     {
         _requireExisting = requireExisting;
@@ -307,7 +308,7 @@ public sealed class ChangeFolderWindow : AutoBackup.UI.ChromeWindow
         var cancel = Ui.Button("Cancel", null, ButtonKind.Secondary, delegate { Close(); });
         cancel.MinWidth = 96;
         cancel.Margin = new Thickness(0, 0, 10, 0);
-        var save = Ui.Button("Save", "\uE73E", ButtonKind.Primary, Accept);
+        var save = Ui.Button(string.IsNullOrEmpty(confirmLabel) ? "Save" : confirmLabel, "\uE73E", ButtonKind.Primary, Accept);
         save.MinWidth = 120;
         AutomationProperties.SetName(save, "Save folder");
         var buttons = new StackPanel

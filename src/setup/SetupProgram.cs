@@ -57,6 +57,10 @@ public static class SetupProgram
             {
                 InstallCommon.CloseRunningApps();
             }
+            if (!isInstalled)
+            {
+                InstallCommon.RemoveLocalPointer();
+            }
 
             var desktopShortcut = isInstalled ? File.Exists(InstallInfo.DesktopShortcut) : true;
             var startMenuShortcut = isInstalled ? File.Exists(InstallInfo.StartMenuShortcut) : true;
@@ -362,8 +366,13 @@ internal sealed class SetupWindow : ChromeWindow
         {
             var desktopShortcut = _desktopShortcut.IsChecked == true;
             var startMenuShortcut = _startMenuShortcut.IsChecked == true;
+            var freshInstall = !_isUpdate;
             await Task.Run(delegate
             {
+                if (freshInstall)
+                {
+                    InstallCommon.RemoveLocalPointer();
+                }
                 InstallCommon.Install(_installFolder, desktopShortcut, startMenuShortcut, progress);
             });
             _installing = false;

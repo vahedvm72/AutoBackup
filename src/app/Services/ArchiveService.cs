@@ -134,6 +134,7 @@ public static class ArchiveService
                 catch
                 {
                 }
+                source = AppConfig.AdaptPathToCurrentUser(source);
                 var backup = AppConfig.CleanPath(job.BackupFolder);
                 if (!string.IsNullOrEmpty(backup))
                 {
@@ -144,6 +145,7 @@ public static class ArchiveService
                     catch
                     {
                     }
+                    backup = AppConfig.AdaptPathToCurrentUser(backup);
                 }
                 var name = (job.Name ?? string.Empty).Trim();
                 if (string.IsNullOrEmpty(name))
@@ -165,6 +167,7 @@ public static class ArchiveService
                 catch
                 {
                 }
+                backup = AppConfig.AdaptPathToCurrentUser(backup);
             }
             foreach (var source in LegacySources(config))
             {
@@ -205,6 +208,7 @@ public static class ArchiveService
             catch
             {
             }
+            cleaned = AppConfig.AdaptPathToCurrentUser(cleaned);
             if (seen.Add(cleaned))
             {
                 result.Add(cleaned);
@@ -250,6 +254,7 @@ public static class ArchiveService
                 catch
                 {
                 }
+                backup = AppConfig.AdaptPathToCurrentUser(backup);
                 result.Add(backup);
             }
         }

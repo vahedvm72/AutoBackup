@@ -23,7 +23,6 @@ public sealed class ShellWindow : ChromeWindow
     private CancellationTokenSource _cts;
     private bool _busy;
     private string _homeNotice;
-    private string _discoveredBackupFolder;
     private bool _autoUpdateChecked;
 
     private enum OperationKind
@@ -60,21 +59,26 @@ public sealed class ShellWindow : ChromeWindow
         }
         else if (load == null || load.Status == ConfigLoadStatus.NoBootstrap)
         {
-            if (!TryLinkExistingSettings(null))
-            {
-                ShowWizard(_discoveredBackupFolder);
-            }
+            ShowStart();
         }
         else
         {
             _expectedSettingsPath = load.SettingsPath;
-            if (!TryLinkExistingSettings(load.SettingsPath))
-            {
-                ShowRecovery(load);
-            }
+            ShowRecovery(load);
         }
 
         Loaded += async delegate { await CheckForUpdatesOnStartupAsync(); };
+    }
+
+    private void ShowStart()
+    {
+        _config = null;
+        _settingsPath = null;
+        SetTitle(AppInfo.Name, "First-time setup");
+        ShowBack(false);
+        ShowSettings(false);
+        var view = new StartView(delegate { ShowWizard(); }, StartRestoreFlow, LocateSettingsFile);
+        ShowView(view);
     }
 
     private async Task CheckForUpdatesOnStartupAsync()
@@ -143,43 +147,6 @@ public sealed class ShellWindow : ChromeWindow
         }
     }
 
-    private bool TryLinkExistingSettings(string unusablePath)
-    {
-        var found = ConfigStore.DiscoverExisting();
-        if (!found.HasSettings)
-        {
-            if (found.HasBackups)
-            {
-                _discoveredBackupFolder = found.BackupFolder;
-            }
-            return false;
-        }
-
-        try
-        {
-            ConfigStore.SaveBootstrap(found.SettingsPath);
-        }
-        catch
-        {
-            return false;
-        }
-
-        _config = found.Config;
-        _settingsPath = found.SettingsPath;
-        EnsureWinRar();
-        _homeNotice = string.IsNullOrEmpty(unusablePath)
-            ? "Your existing settings were found on this device and linked automatically."
-            : "Your settings file was found at a new location and linked automatically.";
-        if (found.ArchiveCount > 0)
-        {
-            _homeNotice += " " + found.ArchiveCount
-                + (found.ArchiveCount == 1 ? " backup is" : " backups are")
-                + " ready to restore.";
-        }
-        ShowHome(false);
-        return true;
-    }
-
     private void ShowHome(bool animate = true)
     {
         if (_config == null)
@@ -237,7 +204,7 @@ public sealed class ShellWindow : ChromeWindow
     private void ShowWizard(string initialBackupFolder = null)
     {
         SetTitle("Set up Auto Backup", "First-time configuration");
-        ShowBack(false);
+        ShowBack(true, delegate { ShowStart(); });
         ShowSettings(false);
         var view = new WizardView(initialBackupFolder);
         view.Completed += delegate(AppConfig config, string path)
@@ -248,6 +215,46 @@ public sealed class ShellWindow : ChromeWindow
             ShowHome();
         };
         ShowView(view);
+    }
+
+    private void StartRestoreFlow()
+    {
+        try
+        {
+            var folder = DialogService.EditFolder(this, "Restore from backups",
+                "Choose the folder that contains your backup archives.",
+                ConfigStore.SuggestedSettingsFolder, true, null, "Continue");
+            if (string.IsNullOrEmpty(folder))
+            {
+                return;
+            }
+            var scan = ArchiveService.ScanArchives(folder);
+            if (scan == null || !scan.Available || scan.Archives.Count == 0)
+            {
+                DialogService.Alert(this, "No backups found",
+                    "No backup archives were found in:\n" + folder + "\n\nChoose the folder where your backups are stored and try again.", true);
+                return;
+            }
+            var winrar = WinRarLocator.Detect();
+            if (!WinRarLocator.IsValid(winrar))
+            {
+                DialogService.Alert(this, "WinRAR was not found",
+                    "Auto Backup needs WinRAR to open the archives.\n\nInstall WinRAR, then try again.", true);
+                return;
+            }
+
+            _config = new AppConfig { BackupFolder = folder, WinRarPath = winrar };
+            _settingsPath = null;
+            SetTitle("Restore a backup", "Choose an archive to restore");
+            ShowBack(true, delegate { ShowStart(); });
+            ShowSettings(false);
+            var view = new PreviousView(_config, RestoreArchive, delegate { ShowWizard(); }, "Restore from backup");
+            ShowView(view);
+        }
+        catch (Exception ex)
+        {
+            DialogService.Alert(this, "The backup folder could not be opened", ex.Message, true);
+        }
     }
 
     private void ShowRecovery(ConfigLoadResult load)
@@ -636,7 +643,10 @@ public sealed class ShellWindow : ChromeWindow
                     progress.SetProgress(percent * backupShare / 100.0, status);
                 }, cts.Token);
                 warning |= backupResult.Warning;
-                ConfigStore.UpdateLastBackup(_config, _settingsPath);
+                if (!string.IsNullOrEmpty(_settingsPath))
+                {
+                    ConfigStore.UpdateLastBackup(_config, _settingsPath);
+                }
             }
 
             for (var i = 0; i < restores.Count; i++)
@@ -650,7 +660,10 @@ public sealed class ShellWindow : ChromeWindow
                 }, cts.Token);
                 warning |= result.Warning;
                 restored++;
-                ConfigStore.UpdateLastRestore(_config, _settingsPath);
+                if (!string.IsNullOrEmpty(_settingsPath))
+                {
+                    ConfigStore.UpdateLastRestore(_config, _settingsPath);
+                }
             }
 
             ShowBatchResult(backupResult, restored, restoreTargets, backupFolders, warning, DateTime.UtcNow - started);
@@ -787,7 +800,10 @@ public sealed class ShellWindow : ChromeWindow
         try
         {
             var result = await ArchiveService.RestoreAsync(_config, archive.FullPath, destination, progress.SetProgress, cts.Token);
-            ConfigStore.UpdateLastRestore(_config, _settingsPath);
+            if (!string.IsNullOrEmpty(_settingsPath))
+            {
+                ConfigStore.UpdateLastRestore(_config, _settingsPath);
+            }
             ShowRestoreResult(result);
         }
         catch (OperationCanceledException)

@@ -70,7 +70,7 @@ public sealed class AppConfig
                 {
                     continue;
                 }
-                var source = CanonicalPath(CleanPath(job.SourceFolder));
+                var source = AdaptPathToCurrentUser(CanonicalPath(CleanPath(job.SourceFolder)));
                 if (string.IsNullOrEmpty(source))
                 {
                     continue;
@@ -79,28 +79,28 @@ public sealed class AppConfig
                 {
                     Name = (job.Name ?? string.Empty).Trim(),
                     SourceFolder = source,
-                    BackupFolder = CanonicalPath(CleanPath(job.BackupFolder))
+                    BackupFolder = AdaptPathToCurrentUser(CanonicalPath(CleanPath(job.BackupFolder)))
                 });
             }
         }
 
         if (jobs.Count == 0)
         {
-            var legacyBackup = CanonicalPath(CleanPath(BackupFolder));
+            var legacyBackup = AdaptPathToCurrentUser(CanonicalPath(CleanPath(BackupFolder)));
             var legacySources = new List<string>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (SourceFolders != null)
             {
                 foreach (var folder in SourceFolders)
                 {
-                    var cleaned = CanonicalPath(CleanPath(folder));
+                    var cleaned = AdaptPathToCurrentUser(CanonicalPath(CleanPath(folder)));
                     if (!string.IsNullOrEmpty(cleaned) && seen.Add(cleaned))
                     {
                         legacySources.Add(cleaned);
                     }
                 }
             }
-            var legacy = CanonicalPath(CleanPath(SourceFolder));
+            var legacy = AdaptPathToCurrentUser(CanonicalPath(CleanPath(SourceFolder)));
             if (legacySources.Count == 0 && !string.IsNullOrEmpty(legacy))
             {
                 legacySources.Add(legacy);
@@ -169,6 +169,63 @@ public sealed class AppConfig
         {
         }
         return "Backup";
+    }
+
+    public static string AdaptPathToCurrentUser(string path)
+    {
+        var cleaned = CleanPath(path);
+        if (string.IsNullOrEmpty(cleaned))
+        {
+            return cleaned;
+        }
+        string full;
+        try
+        {
+            full = System.IO.Path.GetFullPath(cleaned);
+        }
+        catch
+        {
+            return cleaned;
+        }
+        try
+        {
+            if (System.IO.Directory.Exists(full) || System.IO.File.Exists(full))
+            {
+                return full;
+            }
+        }
+        catch
+        {
+            return full;
+        }
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrEmpty(profile))
+        {
+            return full;
+        }
+        var root = System.IO.Path.GetPathRoot(full);
+        if (string.IsNullOrEmpty(root))
+        {
+            return full;
+        }
+        var usersRoot = root + "Users" + System.IO.Path.DirectorySeparatorChar;
+        if (!full.StartsWith(usersRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return full;
+        }
+
+        var remainder = full.Substring(usersRoot.Length);
+        var slash = remainder.IndexOf(System.IO.Path.DirectorySeparatorChar);
+        var oldUser = slash < 0 ? remainder : remainder.Substring(0, slash);
+        var tail = slash < 0 ? string.Empty : remainder.Substring(slash);
+        var currentUser = System.IO.Path.GetFileName(profile.TrimEnd(
+            System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+        if (string.Equals(oldUser, currentUser, StringComparison.OrdinalIgnoreCase))
+        {
+            return full;
+        }
+        return profile.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar) + tail;
     }
 
     private static string CanonicalPath(string value)

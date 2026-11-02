@@ -23,7 +23,7 @@ public sealed class PreviousView : UserControl
     private readonly ScrollViewer _scroll;
     private bool _loading;
 
-    public PreviousView(AppConfig config, Action<ArchiveInfo> restore, Action createBackup)
+    public PreviousView(AppConfig config, Action<ArchiveInfo> restore, Action createBackup, string heading = "Previous Backups")
     {
         _config = config;
         _restore = restore;
@@ -38,7 +38,7 @@ public sealed class PreviousView : UserControl
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var headerText = new StackPanel();
-        headerText.Children.Add(Ui.Display("Previous Backups", 24, FontWeights.SemiBold));
+        headerText.Children.Add(Ui.Display(heading, 24, FontWeights.SemiBold));
         var jobFolders = ArchiveService.GetBackupFolders(config);
         var folderSummary = jobFolders.Count == 1 ? jobFolders[0] : jobFolders.Count + " backup folders";
         _subtitle = Ui.T("Archives saved in " + folderSummary, 12.5, Ui.Muted);
